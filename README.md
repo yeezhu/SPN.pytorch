@@ -10,7 +10,7 @@ Soft Proposal Networks for Weakly Supervised Object Localization, ICCV 2017.
 ### Requirements
 * Python3.5
 * PyTorch: `conda install pytorch torchvision -c soumith`
-* Packages: torch, torchnet, numpy, tqdm
+* Packages: torch, [torchnet](https://github.com/pytorch/tnt), numpy, tqdm, 
 
 ### Usage
 
