@@ -5,10 +5,10 @@ from setuptools import setup, find_packages
 setup(
     name="spn",
     version="1.0",
-    description="Oriented Response Networks, in CVPR2017",
-    url="https://ZhouYanzhao.github.io/ORN",
-    author="Yanzhao Zhou",
-    author_email="zhouyanzhao215@mails.ucas.ac.cn",
+    description="Soft Proposal Networks, ICCV 2017",
+    url="http://yzhu.work/spn",
+    author="July",
+    author_email="zhu.yee@outlook.com",
     # Require cffi.
     install_requires=["cffi>=1.0.0"],
     setup_requires=["cffi>=1.0.0"],
