@@ -11,7 +11,9 @@ import torch.utils.data
 import torchnet as tnt
 import torchvision.transforms as transforms
 from tqdm import tqdm
-
+import numpy as np
+from copy import deepcopy
+from PIL import Image
 from experiment.util import AveragePrecisionMeter, Warp
 
 
@@ -74,7 +76,6 @@ class Engine(object):
         self.state['meter_loss'].add(self.state['loss_batch'])
 
     def on_forward(self, training, model, criterion, data_loader, optimizer=None):
-
         input_var = torch.autograd.Variable(self.state['input'])
         target_var = torch.autograd.Variable(self.state['target'])
 
@@ -91,25 +92,40 @@ class Engine(object):
             self.state['loss'].backward()
             optimizer.step()
 
-    def init_learning(self, model, criterion):
+    def multi_learning(self, model, criterion, train_dataset, val_dataset):
+        src_state_dict = deepcopy(model.state_dict())
+        src_state = deepcopy(self.state)
+        scales = self.state['image_size'].split(',')
+        state_dicts = []
+        if not os.path.exists(self.state['save_model_path']):
+            os.makedirs(self.state['save_model_path'])
+        filename = os.path.join(self.state['save_model_path'], 'model.pth.tar')
+        for imsize in scales:
+            self.state = deepcopy(src_state)
+            self.state['image_size'] = int(imsize)
+            model.load_state_dict(src_state_dict)
+            optimizer = torch.optim.SGD(model.parameters(), lr=self.state['lr'], momentum=self.state['momentum'], weight_decay=self.state['weight_decay'])
+            state_dicts.append(self.learning(model, criterion, train_dataset, val_dataset, optimizer)) 
+            print('save model {filename}'.format(filename=filename))
+            torch.save(state_dicts, filename)
 
+    def init_learning(self, model, criterion):
         if self._state('train_transform') is None:
-            normalize = transforms.Normalize(mean=model.image_normalization_mean,
-                                             std=model.image_normalization_std)
             self.state['train_transform'] = transforms.Compose([
-                Warp(self.state['image_size']),
+                Warp(self.state['image_size'] + 30),
+                transforms.RandomCrop(self.state['image_size']),
                 transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalize,
+                lambda x: torch.from_numpy(np.array(x)).permute(2, 0, 1).float(),
+                lambda x: x.index_select(0, torch.LongTensor([2,1,0])),
+                lambda x: x - torch.Tensor(model.image_normalization_mean).view(3, 1, 1),
             ])
 
         if self._state('val_transform') is None:
-            normalize = transforms.Normalize(mean=model.image_normalization_mean,
-                                             std=model.image_normalization_std)
             self.state['val_transform'] = transforms.Compose([
                 Warp(self.state['image_size']),
-                transforms.ToTensor(),
-                normalize,
+                lambda x: torch.from_numpy(np.array(x)).permute(2, 0, 1).float(),
+                lambda x: x.index_select(0, torch.LongTensor([2,1,0])),
+                lambda x: x - torch.Tensor(model.image_normalization_mean).view(3, 1, 1),
             ])
 
         self.state['best_score'] = 0
@@ -124,7 +140,7 @@ class Engine(object):
         val_dataset.transform = self.state['val_transform']
         val_dataset.target_transform = self._state('val_target_transform')
 
-        # data loading code
+        # data loader
         train_loader = torch.utils.data.DataLoader(train_dataset,
                                                    batch_size=self.state['batch_size'], shuffle=True,
                                                    num_workers=self.state['workers'])
@@ -172,14 +188,18 @@ class Engine(object):
             # remember best prec@1 and save checkpoint
             is_best = prec1 > self.state['best_score']
             self.state['best_score'] = max(prec1, self.state['best_score'])
-            self.save_checkpoint({
+            print(' *** best={best:.3f}'.format(best=self.state['best_score']))
+
+        cur_state = {
                 'epoch': epoch + 1,
+                'image_size': self.state['image_size'],
                 'arch': self._state('arch'),
                 'state_dict': model.module.state_dict() if self.state['use_gpu'] else model.state_dict(),
                 'best_score': self.state['best_score'],
-            }, is_best)
-
-            print(' *** best={best:.3f}'.format(best=self.state['best_score']))
+            }
+        # filename = os.path.join(self.state['save_model_path'], 'checkpoint_{}.pth.tar'.format(self.state['image_size']))
+        # torch.save(deepcopy(cur_state), filename)
+        return deepcopy(cur_state)
 
     def train(self, data_loader, model, criterion, optimizer, epoch):
         # switch to train mode
@@ -248,32 +268,12 @@ class Engine(object):
 
         return score
 
-    def save_checkpoint(self, state, is_best, filename='checkpoint.pth.tar'):
-        if self._state('save_model_path') is not None:
-            filename_ = filename
-            filename = os.path.join(self.state['save_model_path'], filename_)
-            if not os.path.exists(self.state['save_model_path']):
-                os.makedirs(self.state['save_model_path'])
-        print('save model {filename}'.format(filename=filename))
-        torch.save(state, filename)
-        if is_best:
-            filename_best = 'model_best.pth.tar'
-            if self._state('save_model_path') is not None:
-                filename_best = os.path.join(self.state['save_model_path'], filename_best)
-            shutil.copyfile(filename, filename_best)
-            if self._state('save_model_path') is not None:
-                if self._state('filename_previous_best') is not None:
-                    os.remove(self._state('filename_previous_best'))
-                filename_best = os.path.join(self.state['save_model_path'], 'model_best_{score:.4f}_{time}.pth.tar'.format(score=state['best_score'], time=time.strftime("%Y%m%d%H%M%S", time.localtime())))
-                shutil.copyfile(filename, filename_best)
-                self.state['filename_previous_best'] = filename_best
-
     def adjust_learning_rate(self, optimizer):
         """Sets the learning rate to the initial LR decayed by 10 every 10 epochs"""
         # lr = args.lr * (0.1 ** (epoch // 10))
         if self.state['epoch'] is not 0 and self.state['epoch'] in self.state['epoch_step']:
             print('update learning rate')
-            for param_group in optimizer.state_dict()['param_groups']:
+            for param_group in optimizer.param_groups:
                 param_group['lr'] = param_group['lr'] * 0.1
                 print(param_group['lr'])
 
@@ -292,7 +292,7 @@ class MultiLabelMAPEngine(Engine):
         map = 100 * self.state['ap_meter'].value().mean()
         loss = self.state['meter_loss'].value()[0]
         if training:
-            strs = 'Epoch: [{0}]\t trainLoss {loss:.4f}\t trainMAP {map:.3f}'.format(self.state['epoch'], loss=loss, map=map)
+            strs = 'Scale: {imsize}\t Epoch: [{epoch}]\t trainLoss {loss:.4f}\t trainMAP {map:.3f}'.format(imsize=self.state['image_size'], epoch=self.state['epoch'], loss=loss, map=map)
         else:
             strs = 'testLoss {loss:.4f}\t testMAP {map:.3f}'.format(loss=loss, map=map)
         print(strs)
@@ -301,7 +301,6 @@ class MultiLabelMAPEngine(Engine):
     def on_start_batch(self, training, model, criterion, data_loader, optimizer=None):
 
         self.state['target_gt'] = self.state['target'].clone()
-        self.state['target'][self.state['target'] == 0] = 1
         self.state['target'][self.state['target'] == -1] = 0
 
         input = self.state['input']

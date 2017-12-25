@@ -1,8 +1,8 @@
-import experiment.spatialpooling as spatialpooling
-import torch.nn as nn
+import os
 import torch
+import torch.nn as nn
 import torchvision.models as models
-from spn.modules import SoftProposal
+from spn.modules import SoftProposal, SpatialSumOverMap
 
 class SPNetWSL(nn.Module):
     def __init__(self, model, num_classes, num_maps, pooling):
@@ -18,8 +18,7 @@ class SPNetWSL(nn.Module):
         )
 
         # image normalization
-        self.image_normalization_mean = [0.485, 0.456, 0.406]
-        self.image_normalization_std = [0.229, 0.224, 0.225]
+        self.image_normalization_mean = [103.939, 116.779, 123.68]
 
     def forward(self, x): 
         x = self.features(x)
@@ -28,18 +27,21 @@ class SPNetWSL(nn.Module):
         x = self.classifier(x)
         return x
 
-    def get_config_optim(self, lr):
-        return [{'params': self.features.parameters(), 'lr': lr},
-                {'params': self.spatial_pooling.parameters()},
-                {'params': self.classifier.parameters()}]
-
 def vgg16_sp(num_classes, pretrained=True, num_maps=1024):
-    model = models.vgg16(pretrained)
+    model = models.vgg16(pretrained=False)
+    if pretrained:
+        model_path = 'models/VGG16_ImageNet.pt'
+        if os.path.isfile(model_path):
+            state_dict = torch.load(model_path)
+            model.load_state_dict(state_dict)
+        else:
+            print('Please download the pretrained VGG16 into ./models')
+
     num_features = model.features[28].out_channels
     pooling = nn.Sequential()
     pooling.add_module('adconv', nn.Conv2d(num_features, num_maps, kernel_size=3, stride=1, padding=1, groups=2, bias=True))
     pooling.add_module('maps', nn.ReLU())
     pooling.add_module('sp', SoftProposal())
-    pooling.add_module('sum', spatialpooling.SpatialSumOverMap())
+    pooling.add_module('sum', SpatialSumOverMap())
     return SPNetWSL(model, num_classes, num_maps, pooling)
 

@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from ..functions import sp_generate
 
 class SoftProposal(nn.Module):
-    def __init__(self, couple=True, factor=0.15):
+    def __init__(self, couple=True, factor=None):
         super(SoftProposal, self).__init__()
         self.couple = couple   
         self.factor = factor
@@ -18,7 +18,9 @@ class SoftProposal(nn.Module):
         self.mW = input.size(2)
         self.mH = input.size(3)
         self.N = self.mW * self.mH
-
+        if self.factor is None:
+            self.factor = 0.15 * self.N
+            
         input_data = input.data
         self.distanceMetric = input_data.new()
         self.distanceMetric.resize_(self.N, self.N)
@@ -33,7 +35,7 @@ class SoftProposal(nn.Module):
         if self.nBatch != input.size(0) or self.mW != input.size(2) or self.mH != input.size(3):
             self.lazyInit(input)
 
-        return sp_generate(input, self.distanceMetric, self.transferMatrix, self.proposal, self.proposalBuffer, self.couple)
+        return sp_generate(input, self.distanceMetric, self.transferMatrix, self.proposal, self.proposalBuffer, self.factor, self.couple)
 
     def __repr__(self):
         sp_config = '[couple={},factor={}]'.format(self.couple, self.factor)

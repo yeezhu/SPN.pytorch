@@ -9,7 +9,7 @@ int cuspn_(SP_InitDistanceMetric)(
     const uint16 mH,
     const uint16 N)
 {
-    const uint16 count = N * N;
+    const uint32 count = N * N;
 
     THCTensor_(resize2d)(state, distanceMetric, N, N);
     real *distanceMetric_data = THCTensor_(data)(state, distanceMetric);
@@ -64,7 +64,6 @@ int cuspn_(SP_Generate)(
 
     const float avg = 1.0f / N;
     float sumOver;
-    float sumOver_debug;
     uint32 count;
     uint32 i, j;
 
